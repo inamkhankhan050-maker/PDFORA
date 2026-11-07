@@ -77,6 +77,55 @@ export async function renderPage(document, pageNumber, scale, canvas) {
   return { width: viewport.width, height: viewport.height, transform: viewport.transform };
 }
 
+function multiplyTransforms(left, right) {
+  const [a, b, c, d, e, f] = left;
+  const [g, h, i, j, k, l] = right;
+  return [a * g + c * h, b * g + d * h, a * i + c * j, b * i + d * j, a * k + c * l + e, b * k + d * l + f];
+}
+
+export async function renderSelectableText(pdfDocument, pageNumber, scale, layer) {
+  const page = await pdfDocument.getPage(pageNumber);
+  const viewport = page.getViewport({ scale, rotation: page.rotate });
+  const content = await page.getTextContent();
+  layer.replaceChildren();
+  layer.style.width = `${Math.floor(viewport.width)}px`;
+  layer.style.height = `${Math.floor(viewport.height)}px`;
+  layer.dataset.viewportWidth = String(viewport.width);
+  layer.dataset.viewportHeight = String(viewport.height);
+
+  const measurementCanvas = globalThis.document.createElement("canvas");
+  const context = measurementCanvas.getContext("2d");
+  let wordCount = 0;
+  for (const item of content.items) {
+    if (!("str" in item) || !item.str.trim()) continue;
+    const style = content.styles[item.fontName] || {};
+    const transform = multiplyTransforms(viewport.transform, item.transform);
+    const angle = Math.atan2(transform[1], transform[0]);
+    const fontSize = Math.hypot(transform[2], transform[3]);
+    const ascent = style.ascent ?? (style.descent ? 1 + style.descent : 0.8);
+    const family = style.fontFamily || "sans-serif";
+    const desiredWidth = Math.max(0, item.width * scale);
+    if (context) {
+      context.font = `${fontSize}px ${family}`;
+    }
+    const measuredWidth = context?.measureText(item.str).width || desiredWidth || 1;
+    const scaleX = desiredWidth > 0 ? desiredWidth / measuredWidth : 1;
+    const span = globalThis.document.createElement("span");
+    span.className = "selectable-text-item";
+    span.textContent = item.str;
+    span.dataset.fontSize = String(fontSize / scale);
+    span.style.left = `${transform[4]}px`;
+    span.style.top = `${transform[5] - ascent * fontSize}px`;
+    span.style.height = `${fontSize}px`;
+    span.style.fontSize = `${fontSize}px`;
+    span.style.fontFamily = family;
+    span.style.transform = `rotate(${angle}rad) scaleX(${scaleX})`;
+    layer.append(span);
+    wordCount += (item.str.match(/\S+/g) || []).length;
+  }
+  return { wordCount, transform: viewport.transform, width: viewport.width, height: viewport.height };
+}
+
 let pdfLibPromise;
 
 async function getPDFLib() {
@@ -100,6 +149,26 @@ export async function exportPDFWithText(file, edits) {
   for (const edit of edits) {
     const page = pdf.getPage(edit.page - 1);
     if (!page) throw new Error(`Page ${edit.page} is no longer available.`);
+    if (edit.type === "replaceWord") {
+      page.drawRectangle({
+        x: edit.x,
+        y: edit.maskY ?? edit.y,
+        width: edit.width,
+        height: edit.height,
+        color: rgb(1, 1, 1),
+      });
+      if (edit.replacement) {
+        let replacementColor;
+        try {
+          font.encodeText(edit.replacement);
+          replacementColor = rgb(Number.parseInt(edit.color.slice(1, 3), 16) / 255, Number.parseInt(edit.color.slice(3, 5), 16) / 255, Number.parseInt(edit.color.slice(5, 7), 16) / 255);
+        } catch {
+          throw new Error("This font supports basic Latin characters only. Hindi and other Unicode text need an embedded font, planned for a later phase.");
+        }
+        page.drawText(edit.replacement, { x: edit.x, y: edit.y, size: edit.size, font, color: replacementColor });
+      }
+      continue;
+    }
     let color;
     try {
       color = rgb(Number.parseInt(edit.color.slice(1, 3), 16) / 255, Number.parseInt(edit.color.slice(3, 5), 16) / 255, Number.parseInt(edit.color.slice(5, 7), 16) / 255);

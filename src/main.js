@@ -1,16 +1,17 @@
 import { PRODUCT } from "./config.js";
 import { renderLanding } from "./components/landing.js";
 import { renderEditorShell, renderEditorPage, renderPageThumbnails } from "./components/editor.js";
-import { exportPDFWithText, formatBytes, openPDF, validatePDFFile } from "./services/pdf-service.js";
+import { exportPDFWithText, formatBytes, openPDF, renderSelectableText, validatePDFFile } from "./services/pdf-service.js";
 
 const app = document.querySelector("#app");
-const state = { document: null, file: null, page: 1, scale: 1, pageDimensions: null, pageTransform: null, edits: [], addTextMode: false, dragDepth: 0 };
+const state = { document: null, file: null, page: 1, scale: 1, pageDimensions: null, pageTransform: null, edits: [], selectedWord: null, addTextMode: false, dragDepth: 0 };
 
 function showLanding(message = "") {
   if (state.document) state.document.destroy().catch(() => {});
   state.document = null;
   state.file = null;
   state.edits = [];
+  state.selectedWord = null;
   state.addTextMode = false;
   app.innerHTML = renderLanding();
   if (message) setUploadMessage(message, true);
@@ -36,6 +37,7 @@ async function loadFile(file) {
     state.page = 1;
     state.scale = 1;
     state.edits = [];
+    state.selectedWord = null;
     state.addTextMode = false;
     app.innerHTML = renderEditorShell(file, documentProxy.numPages);
     bindEditor();
@@ -82,7 +84,12 @@ function bindEditor() {
   document.querySelectorAll('[data-action="add-text-mode"]').forEach((button) => button.addEventListener("click", activateTextPlacement));
   document.querySelector('[data-action="undo-edit"]').addEventListener("click", undoEdit);
   document.querySelector('[data-action="export-pdf"]').addEventListener("click", exportEditedPDF);
+  document.querySelector('[data-action="export-jpg"]').addEventListener("click", () => exportEditedPageImage("jpg"));
+  document.querySelector('[data-action="export-png"]').addEventListener("click", () => exportEditedPageImage("png"));
   document.querySelector("#pdf-canvas").addEventListener("click", placeText);
+  document.querySelector("#selectable-text-layer").addEventListener("click", selectWord);
+  document.querySelector('[data-action="replace-word"]').addEventListener("click", () => applyWordEdit(false));
+  document.querySelector('[data-action="delete-word"]').addEventListener("click", () => applyWordEdit(true));
   document.querySelector("#page-stage").addEventListener("wheel", handleTrackpadZoom, { passive: false });
 }
 
@@ -92,12 +99,17 @@ async function paintPage() {
   try {
     state.pageDimensions = await renderEditorPage(state.document, state.page, state.scale, canvas);
     state.pageTransform = state.pageDimensions.transform;
+    const textReport = await renderSelectableText(state.document, state.page, state.scale, document.querySelector("#selectable-text-layer"));
     document.querySelector("#current-page").textContent = String(state.page);
     document.querySelector("#zoom-label").textContent = `${Math.round(state.scale * 100)}%`;
     renderPageThumbnails(state.document, document.querySelector("#page-list"), state.page, goToPage);
     document.querySelector('[data-action="prev-page"]').disabled = state.page <= 1;
     document.querySelector('[data-action="next-page"]').disabled = state.page >= state.document.numPages;
     renderTextOverlays();
+    renderSelectedWord();
+    document.querySelector("#selection-hint").textContent = textReport.wordCount === 0
+      ? "This page has no selectable text. Scanned-page OCR is planned for a later phase."
+      : "Select a word in the page, or add new text below.";
     updateEditControls();
   } catch {
     const stage = document.querySelector("#page-stage");
@@ -130,15 +142,14 @@ function placeText(event) {
   const size = Number(document.querySelector("#text-size").value);
   const color = document.querySelector("#text-color").value;
   const rect = event.currentTarget.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  const [a, b, c, d, e, f] = state.pageTransform;
-  const determinant = a * d - b * c;
-  if (!determinant) return;
+  const x = (event.clientX - rect.left) * state.pageDimensions.width / rect.width;
+  const y = (event.clientY - rect.top) * state.pageDimensions.height / rect.height;
+  const [pdfX, pdfY] = inverseTransformPoint(x, y, state.pageTransform);
   const command = {
+    type: "addText",
     page: state.page,
-    x: (d * (x - e) - c * (y - f)) / determinant,
-    y: (-b * (x - e) + a * (y - f)) / determinant,
+    x: pdfX,
+    y: pdfY,
     text,
     size,
     color,
@@ -151,21 +162,166 @@ function placeText(event) {
   updateEditControls();
 }
 
+function selectWord(event) {
+  if (state.addTextMode) return;
+  const item = event.target.closest(".selectable-text-item");
+  if (!item) return;
+  event.preventDefault();
+  let offset = 0;
+  const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+  if (caret && item.contains(caret.startContainer)) {
+    offset = caret.startOffset;
+  } else {
+    const position = document.caretPositionFromPoint?.(event.clientX, event.clientY);
+    if (position && item.contains(position.offsetNode)) offset = position.offset;
+  }
+  const text = item.textContent || "";
+  const words = [...text.matchAll(/\S+/g)];
+  const selected = words.find((word) => offset >= word.index && offset <= word.index + word[0].length) || words[0];
+  if (!selected) return;
+  const range = document.createRange();
+  range.setStart(item.firstChild, selected.index);
+  range.setEnd(item.firstChild, selected.index + selected[0].length);
+  const rect = range.getBoundingClientRect();
+  const canvas = document.querySelector("#pdf-canvas");
+  const canvasRect = canvas.getBoundingClientRect();
+  const scaleX = state.pageDimensions.width / canvasRect.width;
+  const scaleY = state.pageDimensions.height / canvasRect.height;
+  const screenBox = {
+    x: (rect.left - canvasRect.left),
+    y: (rect.top - canvasRect.top),
+    width: rect.width,
+    height: rect.height,
+  };
+  const points = [
+    [screenBox.x * scaleX, screenBox.y * scaleY],
+    [(screenBox.x + screenBox.width) * scaleX, screenBox.y * scaleY],
+    [screenBox.x * scaleX, (screenBox.y + screenBox.height) * scaleY],
+    [(screenBox.x + screenBox.width) * scaleX, (screenBox.y + screenBox.height) * scaleY],
+  ].map(([x, y]) => inverseTransformPoint(x, y, state.pageTransform));
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const padding = 0.6;
+  const box = {
+    x: Math.min(...xs) - padding,
+    y: Math.min(...ys) - padding,
+    width: Math.max(...xs) - Math.min(...xs) + padding * 2,
+    height: Math.max(...ys) - Math.min(...ys) + padding * 2,
+  };
+  state.selectedWord = {
+    id: `${state.page}-${selected.index}-${Date.now()}`,
+    page: state.page,
+    text: selected[0],
+    box,
+    screenBox,
+    size: Number(item.dataset.fontSize) || 12,
+  };
+  document.querySelector("#replacement-text").value = selected[0];
+  document.querySelector("#selection-tools").hidden = false;
+  document.querySelector("#selection-hint").textContent = `Selected “${selected[0]}” on page ${state.page}.`;
+  document.querySelector("#edit-status").textContent = "Change the word or delete it, then export a copy.";
+  renderSelectedWord();
+}
+
+function inverseTransformPoint(x, y, transform) {
+  const [a, b, c, d, e, f] = transform;
+  const determinant = a * d - b * c;
+  return [(d * (x - e) - c * (y - f)) / determinant, (-b * (x - e) + a * (y - f)) / determinant];
+}
+
+function applyWordEdit(deleteWord) {
+  const selected = state.selectedWord;
+  if (!selected) return;
+  const replacement = deleteWord ? "" : document.querySelector("#replacement-text").value;
+  state.edits.push({
+    type: "replaceWord",
+    page: selected.page,
+    originalWord: selected.text,
+    replacement,
+    x: selected.box.x,
+    y: selected.box.y + selected.box.height * 0.18,
+    maskY: selected.box.y,
+    width: selected.box.width,
+    height: selected.box.height,
+    size: selected.size,
+    color: document.querySelector("#text-color").value,
+  });
+  document.querySelector("#edit-status").textContent = deleteWord ? `Masked “${selected.text}” visually in the working copy.` : `Replaced “${selected.text}” visually. Font and spacing may differ.`;
+  state.selectedWord = null;
+  document.querySelector("#selection-tools").hidden = true;
+  document.querySelector("#selection-hint").textContent = "Select another word, or add new text below.";
+  renderTextOverlays();
+  renderSelectedWord();
+  updateEditControls();
+}
+
 function renderTextOverlays() {
   const layer = document.querySelector("#text-overlay-layer");
   if (!layer || !state.pageTransform) return;
   layer.replaceChildren();
   const [a, b, c, d, e, f] = state.pageTransform;
+  const canvas = document.querySelector("#pdf-canvas");
+  const pageScaleX = canvas.clientWidth / state.pageDimensions.width;
+  const pageScaleY = canvas.clientHeight / state.pageDimensions.height;
   for (const edit of state.edits.filter((item) => item.page === state.page)) {
+    if (edit.type === "replaceWord") {
+      const points = [
+        [edit.x, edit.maskY ?? edit.y], [edit.x + edit.width, edit.maskY ?? edit.y],
+        [edit.x, (edit.maskY ?? edit.y) + edit.height], [edit.x + edit.width, (edit.maskY ?? edit.y) + edit.height],
+      ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+      const xs = points.map(([x]) => x);
+      const ys = points.map(([, y]) => y);
+      const mask = document.createElement("span");
+      mask.className = "word-mask";
+      mask.style.left = `${Math.min(...xs) * pageScaleX}px`;
+      mask.style.top = `${Math.min(...ys) * pageScaleY}px`;
+      mask.style.width = `${(Math.max(...xs) - Math.min(...xs)) * pageScaleX}px`;
+      mask.style.height = `${(Math.max(...ys) - Math.min(...ys)) * pageScaleY}px`;
+      layer.append(mask);
+      if (edit.replacement) {
+        const replacement = document.createElement("span");
+        replacement.className = "placed-text";
+        replacement.textContent = edit.replacement;
+        replacement.style.left = `${(a * edit.x + c * edit.y + e) * pageScaleX}px`;
+        replacement.style.top = `${(b * edit.x + d * edit.y + f - edit.size * state.scale * 0.9) * pageScaleY}px`;
+        replacement.style.fontSize = `${edit.size * state.scale * pageScaleY}px`;
+        replacement.style.color = edit.color;
+        layer.append(replacement);
+      }
+      continue;
+    }
     const node = document.createElement("span");
     node.className = "placed-text";
     node.textContent = edit.text;
-    node.style.left = `${a * edit.x + c * edit.y + e}px`;
-    node.style.top = `${b * edit.x + d * edit.y + f - edit.size * state.scale * 0.9}px`;
-    node.style.fontSize = `${edit.size * state.scale}px`;
+    node.style.left = `${(a * edit.x + c * edit.y + e) * pageScaleX}px`;
+    node.style.top = `${(b * edit.x + d * edit.y + f - edit.size * state.scale * 0.9) * pageScaleY}px`;
+    node.style.fontSize = `${edit.size * state.scale * pageScaleY}px`;
     node.style.color = edit.color;
     layer.append(node);
   }
+}
+
+function renderSelectedWord() {
+  const layer = document.querySelector("#text-overlay-layer");
+  const selected = state.selectedWord;
+  if (!layer || !selected || selected.page !== state.page || !state.pageDimensions) return;
+  const canvas = document.querySelector("#pdf-canvas");
+  const scaleX = canvas.clientWidth / state.pageDimensions.width;
+  const scaleY = canvas.clientHeight / state.pageDimensions.height;
+  const [a, b, c, d, e, f] = state.pageTransform;
+  const points = [
+    [selected.box.x, selected.box.y], [selected.box.x + selected.box.width, selected.box.y],
+    [selected.box.x, selected.box.y + selected.box.height], [selected.box.x + selected.box.width, selected.box.y + selected.box.height],
+  ].map(([x, y]) => [a * x + c * y + e, b * x + d * y + f]);
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  const highlight = document.createElement("span");
+  highlight.className = "selected-word-highlight";
+  highlight.style.left = `${Math.min(...xs) * scaleX}px`;
+  highlight.style.top = `${Math.min(...ys) * scaleY}px`;
+  highlight.style.width = `${(Math.max(...xs) - Math.min(...xs)) * scaleX}px`;
+  highlight.style.height = `${(Math.max(...ys) - Math.min(...ys)) * scaleY}px`;
+  layer.append(highlight);
 }
 
 function updateEditControls() {
@@ -181,7 +337,7 @@ function undoEdit() {
   if (!edit) return;
   state.addTextMode = false;
   document.querySelector("#page-stage").classList.remove("placing-text");
-  document.querySelector("#edit-status").textContent = "Removed the last text addition.";
+  document.querySelector("#edit-status").textContent = "Undid the last edit.";
   renderTextOverlays();
   updateEditControls();
 }
@@ -207,9 +363,66 @@ async function exportEditedPDF() {
   }
 }
 
+async function exportEditedPageImage(format) {
+  const status = document.querySelector("#edit-status");
+  status.textContent = `Preparing page ${state.page} as ${format.toUpperCase()}…`;
+  try {
+    const page = await state.document.getPage(state.page);
+    const baseViewport = page.getViewport({ scale: 1, rotation: page.rotate });
+    const maxPixels = 30_000_000;
+    const scale = Math.min(2, Math.sqrt(maxPixels / (baseViewport.width * baseViewport.height)));
+    const viewport = page.getViewport({ scale, rotation: page.rotate });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("This browser couldn't create an image export canvas.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: context, viewport }).promise;
+    const [a, b, c, d, e, f] = viewport.transform;
+    for (const edit of state.edits.filter((item) => item.page === state.page)) {
+      context.save();
+      context.setTransform(a, b, c, d, e, f);
+      if (edit.type === "replaceWord") {
+        context.fillStyle = "#ffffff";
+        context.fillRect(edit.x, edit.maskY ?? edit.y, edit.width, edit.height);
+        if (edit.replacement) {
+          context.fillStyle = edit.color;
+          context.font = `${edit.size}px Helvetica, Arial, sans-serif`;
+          context.textBaseline = "alphabetic";
+          context.fillText(edit.replacement, edit.x, edit.y);
+        }
+      } else {
+        context.fillStyle = edit.color;
+        context.font = `${edit.size}px Helvetica, Arial, sans-serif`;
+        context.textBaseline = "alphabetic";
+        context.fillText(edit.text, edit.x, edit.y);
+      }
+      context.restore();
+    }
+    const mime = format === "jpg" ? "image/jpeg" : "image/png";
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime, 0.94));
+    if (!blob) throw new Error("The browser couldn't encode this page as an image.");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const basename = state.file.name.replace(/\.pdf$/i, "") || "pdfora-page";
+    link.href = url;
+    link.download = `${basename}-page-${state.page}.${format}`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    status.textContent = `Downloaded page ${state.page} as ${format.toUpperCase()} with visible edits.`;
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : "The page image couldn't be exported.";
+  }
+}
+
 function goToPage(page) {
   if (!state.document || page < 1 || page > state.document.numPages || page === state.page) return;
   state.page = page;
+  state.selectedWord = null;
+  document.querySelector("#selection-tools").hidden = true;
+  document.querySelector("#selection-hint").textContent = "Select a word in the page, or add new text below.";
   paintPage();
   document.querySelector("#page-stage")?.scrollTo({ top: 0, behavior: "smooth" });
 }

@@ -2,7 +2,7 @@
 
 **Edit Anything. Perfect Every Page.**
 
-PDFora is a browser-based PDF studio. The current foundation includes a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, new-text overlays, undo for text additions, edited-copy export, and downloading the untouched original.
+PDFora is a browser-based PDF studio. The current foundation includes a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, click-to-select word replacement/deletion, new-text overlays, undo, edited-copy export, and current-page PNG/JPG downloads.
 
 ## Run locally
 
@@ -21,11 +21,13 @@ PDF.js is loaded from cdnjs at a pinned version. An internet connection is requi
 - Responsive landing page with drag-and-drop and file picker.
 - PDF signature, type, 50 MB file size, and 1–10 page validation.
 - Browser-side rendering with PDF.js, page thumbnails, page navigation, fit, and 25%–400% zoom.
+- Click a word in text-based PDFs to select it, replace it, or visually mask it for deletion.
 - Add basic Latin text overlays with a chosen size and color; undo additions and export a separate PDF copy using pdf-lib.
+- Download the current page as PNG or JPG with the visible edits included.
 - Download of the original, unchanged file.
 - Clear error messages for invalid, unreadable, oversized, and out-of-range files.
 
-Replacing existing text, image editing, OCR, AI, object removal, forms, and annotations are not implemented yet. Text additions are new vector overlays, not native replacement of existing PDF text. Export requires an internet connection to load pdf-lib; only basic Latin characters are supported by the built-in font.
+Text replacement and deletion use visual overlays, not native content-stream editing or secure redaction. Removed text may remain searchable inside the PDF, and white masking may not match non-white backgrounds. Image editing, OCR, AI, object removal, forms, and annotations are not implemented yet. Export requires an internet connection to load pdf-lib; only basic Latin characters are supported by the built-in font. PNG/JPG export downloads the current page only.
 
 ## Repository map
 
