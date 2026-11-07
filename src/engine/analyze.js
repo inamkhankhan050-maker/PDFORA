@@ -114,6 +114,6 @@ export function analyzePage(PDFLib, pdfDoc, pageIndex) {
   const page = pdfDoc.getPage(pageIndex);
   const contentText = readPageContent(PDFLib, page);
   const fonts = collectFonts(PDFLib, pdfDoc, page);
-  const { objects } = collectObjects(PDFLib, pdfDoc, page, contentText);
-  return { pageIndex, box: pageBox(page), fonts, objects, contentText };
+  const { objects, ops } = collectObjects(PDFLib, pdfDoc, page, contentText);
+  return { pageIndex, box: pageBox(page), fonts, objects, contentText, ops };
 }

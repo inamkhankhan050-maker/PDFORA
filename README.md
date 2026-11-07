@@ -8,6 +8,13 @@ Browser-based PDF editor. No sign-up, no watermark, everything runs in the brows
 - Add new text, erase any area, undo/redo, autosave in the browser.
 - Download as PDF, a page as JPG/PNG, or all pages as a ZIP.
 
+## Run locally
+```
+cd PDFORA
+python3 -m http.server 8000
+```
+Open http://localhost:8000 in Chrome.
+
 See TESTING.md for what is verified and the known limits.
 
 # PDFora

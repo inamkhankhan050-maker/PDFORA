@@ -1,5 +1,7 @@
 // The editing engine: applies an edit list to a fresh copy of the original PDF bytes.
 // The original bytes are never modified. Untouched content-stream bytes are kept verbatim.
+import { planTextRemoval } from "./text-removal.js";
+import { widthOfCode } from "./font-map.js";
 import { analyzePage } from "./analyze.js";
 import { binaryStringToBytes } from "./content-stream.js";
 import { FontResolver } from "./font-resolver.js";
@@ -204,6 +206,9 @@ export async function applyEdits(libs, originalBytes, edits, options = {}) {
       }
     }
 
+    const removalQuads = edits.filter((item) => item.page === pageNumber && ((item.type === "text" && item.mask?.length === 4) || (item.type === "erase" && item.quad?.length === 4))).map((item) => item.mask || item.quad);
+    const removal = planTextRemoval(analysis.ops, analysis.fonts, removalQuads, widthOfCode);
+    splices.push(...removal.splices);
     let content = analysis.contentText;
     for (const splice of splices.sort((a, b) => b.start - a.start)) content = content.slice(0, splice.start) + splice.text + content.slice(splice.end);
     writer.replaceContent(`${back.join("\n")}\nq\n${content}\nQ\n${front.join("\n")}\n`);

@@ -92,7 +92,7 @@ export function renderTextSelection({ selection, profiles, report }) {
     </div>
     ${styleRow(style)}
     ${fontNotice(report)}
-    <p class="selection-warning">The replaced original text is covered with the background colour; it is not secure redaction.</p>`;
+    <p class="selection-warning">The old text is removed from the PDF file itself (not just hidden). Text inside nested form objects is covered instead.</p>`;
 }
 
 export function renderAddedText({ edit, profiles, report }) {
