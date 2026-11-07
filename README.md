@@ -1,5 +1,17 @@
 # PDFora
 
+Browser-based PDF editor. No sign-up, no watermark, everything runs in the browser.
+
+## What it does
+- Click any word or line and edit or delete it; the text is re-written with the PDF's own font when it has the glyphs, otherwise a close standard font or Noto Sans (Hindi supported).
+- Select images to move, resize, rotate, flip, crop, replace, delete; insert new images.
+- Add new text, erase any area, undo/redo, autosave in the browser.
+- Download as PDF, a page as JPG/PNG, or all pages as a ZIP.
+
+See TESTING.md for what is verified and the known limits.
+
+# PDFora
+
 **Edit Anything. Perfect Every Page.**
 
 PDFora is a browser-based PDF studio. The current foundation includes a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, click-to-select word replacement/deletion, new-text overlays, undo, edited-copy export, and current-page PNG/JPG downloads.

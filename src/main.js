@@ -1459,6 +1459,6 @@ window.addEventListener("beforeunload", (event) => {
 window.addEventListener("resize", () => debounce("resize", () => drawOverlay(), 150));
 
 // Exposed for automated browser tests only.
-globalThis.__pdfora = { state, loadBytes: (bytes, fileName = "test.pdf") => openDocument({ fileName, fileSize: bytes.length, bytes }) };
+if (new URLSearchParams(location.search).has("test")) globalThis.__pdfora = { state, loadBytes: (bytes, fileName = "test.pdf") => openDocument({ fileName, fileSize: bytes.length, bytes }) };
 
 showLanding();
