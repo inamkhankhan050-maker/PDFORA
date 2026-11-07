@@ -87,42 +87,27 @@ export async function renderSelectableText(pdfDocument, pageNumber, scale, layer
   const page = await pdfDocument.getPage(pageNumber);
   const viewport = page.getViewport({ scale, rotation: page.rotate });
   const content = await page.getTextContent();
+  const pdfjs = await getPDFJS();
   layer.replaceChildren();
+  layer.classList.add("textLayer");
   layer.style.width = `${Math.floor(viewport.width)}px`;
   layer.style.height = `${Math.floor(viewport.height)}px`;
   layer.dataset.viewportWidth = String(viewport.width);
   layer.dataset.viewportHeight = String(viewport.height);
-
-  const measurementCanvas = globalThis.document.createElement("canvas");
-  const context = measurementCanvas.getContext("2d");
-  let wordCount = 0;
-  for (const item of content.items) {
-    if (!("str" in item) || !item.str.trim()) continue;
-    const style = content.styles[item.fontName] || {};
-    const transform = multiplyTransforms(viewport.transform, item.transform);
-    const angle = Math.atan2(transform[1], transform[0]);
-    const fontSize = Math.hypot(transform[2], transform[3]);
-    const ascent = style.ascent ?? (style.descent ? 1 + style.descent : 0.8);
-    const family = style.fontFamily || "sans-serif";
-    const desiredWidth = Math.max(0, item.width * scale);
-    if (context) {
-      context.font = `${fontSize}px ${family}`;
-    }
-    const measuredWidth = context?.measureText(item.str).width || desiredWidth || 1;
-    const scaleX = desiredWidth > 0 ? desiredWidth / measuredWidth : 1;
-    const span = globalThis.document.createElement("span");
-    span.className = "selectable-text-item";
-    span.textContent = item.str;
-    span.dataset.fontSize = String(fontSize / scale);
-    span.style.left = `${transform[4]}px`;
-    span.style.top = `${transform[5] - ascent * fontSize}px`;
-    span.style.height = `${fontSize}px`;
-    span.style.fontSize = `${fontSize}px`;
-    span.style.fontFamily = family;
-    span.style.transform = `rotate(${angle}rad) scaleX(${scaleX})`;
-    layer.append(span);
-    wordCount += (item.str.match(/\S+/g) || []).length;
+  layer.style.setProperty("--scale-factor", String(scale));
+  const textLayer = new pdfjs.TextLayer({
+    textContentSource: page.streamTextContent(),
+    viewport,
+    container: layer,
+  });
+  await textLayer.render();
+  const spans = [...layer.querySelectorAll("span")].filter((span) => span.textContent?.trim());
+  for (const span of spans) {
+    span.classList.add("selectable-text-item");
+    span.dataset.fontSize = String((Number.parseFloat(getComputedStyle(span).fontSize) || 12) / scale);
+    span.dataset.source = "native";
   }
+  const wordCount = content.items.reduce((count, item) => count + ("str" in item ? (item.str.match(/\S+/g) || []).length : 0), 0);
   return { wordCount, transform: viewport.transform, width: viewport.width, height: viewport.height };
 }
 

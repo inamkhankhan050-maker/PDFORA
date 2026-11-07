@@ -2,9 +2,10 @@ import { PRODUCT } from "./config.js";
 import { renderLanding } from "./components/landing.js";
 import { renderEditorShell, renderEditorPage, renderPageThumbnails } from "./components/editor.js";
 import { exportPDFWithText, formatBytes, openPDF, renderSelectableText, validatePDFFile } from "./services/pdf-service.js";
+import { recognizePDFPage } from "./services/ocr-service.js";
 
 const app = document.querySelector("#app");
-const state = { document: null, file: null, page: 1, scale: 1, pageDimensions: null, pageTransform: null, edits: [], selectedWord: null, addTextMode: false, dragDepth: 0 };
+const state = { document: null, file: null, page: 1, scale: 1, pageDimensions: null, pageTransform: null, edits: [], selectedWord: null, ocrByPage: new Map(), addTextMode: false, dragDepth: 0 };
 
 function showLanding(message = "") {
   if (state.document) state.document.destroy().catch(() => {});
@@ -12,6 +13,7 @@ function showLanding(message = "") {
   state.file = null;
   state.edits = [];
   state.selectedWord = null;
+  state.ocrByPage = new Map();
   state.addTextMode = false;
   app.innerHTML = renderLanding();
   if (message) setUploadMessage(message, true);
@@ -38,6 +40,7 @@ async function loadFile(file) {
     state.scale = 1;
     state.edits = [];
     state.selectedWord = null;
+    state.ocrByPage = new Map();
     state.addTextMode = false;
     app.innerHTML = renderEditorShell(file, documentProxy.numPages);
     bindEditor();
@@ -90,6 +93,13 @@ function bindEditor() {
   document.querySelector("#selectable-text-layer").addEventListener("click", selectWord);
   document.querySelector('[data-action="replace-word"]').addEventListener("click", () => applyWordEdit(false));
   document.querySelector('[data-action="delete-word"]').addEventListener("click", () => applyWordEdit(true));
+  document.querySelector('[data-action="run-ocr"]').addEventListener("click", runOCR);
+  document.querySelector("#replacement-text").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyWordEdit(false);
+    }
+  });
   document.querySelector("#page-stage").addEventListener("wheel", handleTrackpadZoom, { passive: false });
 }
 
@@ -100,6 +110,8 @@ async function paintPage() {
     state.pageDimensions = await renderEditorPage(state.document, state.page, state.scale, canvas);
     state.pageTransform = state.pageDimensions.transform;
     const textReport = await renderSelectableText(state.document, state.page, state.scale, document.querySelector("#selectable-text-layer"));
+    const ocrWords = state.ocrByPage.get(state.page) || [];
+    appendOCRWordSpans(ocrWords);
     document.querySelector("#current-page").textContent = String(state.page);
     document.querySelector("#zoom-label").textContent = `${Math.round(state.scale * 100)}%`;
     renderPageThumbnails(state.document, document.querySelector("#page-list"), state.page, goToPage);
@@ -107,13 +119,72 @@ async function paintPage() {
     document.querySelector('[data-action="next-page"]').disabled = state.page >= state.document.numPages;
     renderTextOverlays();
     renderSelectedWord();
-    document.querySelector("#selection-hint").textContent = textReport.wordCount === 0
-      ? "This page has no selectable text. Scanned-page OCR is planned for a later phase."
-      : "Select a word in the page, or add new text below.";
+    if (!state.selectedWord) {
+      document.querySelector("#selection-hint").textContent = textReport.wordCount === 0 && !ocrWords.length
+        ? "This page has no selectable text yet. Choose the page language and run OCR to enable word edits."
+        : "Click a word to select it, or drag across native PDF text to select several words.";
+    }
     updateEditControls();
   } catch {
     const stage = document.querySelector("#page-stage");
     if (stage) stage.innerHTML = '<div class="canvas-error">This page could not be rendered. Try another page or PDF.</div>';
+  }
+}
+
+function appendOCRWordSpans(words) {
+  if (!words.length || !state.pageDimensions) return;
+  const layer = document.querySelector("#selectable-text-layer");
+  const canvas = document.querySelector("#pdf-canvas");
+  const scaleX = canvas.clientWidth / state.pageDimensions.width;
+  const scaleY = canvas.clientHeight / state.pageDimensions.height;
+  const [a, b, c, d, e, f] = state.pageTransform;
+  for (const word of words) {
+    const { x, y, width, height } = word.box;
+    const points = [[x,y],[x+width,y],[x,y+height],[x+width,y+height]].map(([px,py]) => [a*px+c*py+e,b*px+d*py+f]);
+    const xs = points.map(([px]) => px);
+    const ys = points.map(([,py]) => py);
+    const span = document.createElement("span");
+    span.className = "selectable-text-item ocr-word";
+    span.textContent = word.text;
+    span.dataset.source = "ocr";
+    span.dataset.fontSize = String(word.size);
+    span.dataset.confidence = String(word.confidence);
+    span.dataset.pdfX = String(x);
+    span.dataset.pdfY = String(y);
+    span.dataset.pdfWidth = String(width);
+    span.dataset.pdfHeight = String(height);
+    span.style.left = `${Math.min(...xs) * scaleX}px`;
+    span.style.top = `${Math.min(...ys) * scaleY}px`;
+    span.style.width = `${Math.max(...xs) - Math.min(...xs)}px`;
+    span.style.height = `${Math.max(...ys) - Math.min(...ys)}px`;
+    span.style.fontSize = `${Math.max(8, (Math.max(...ys) - Math.min(...ys)) * scaleY)}px`;
+    layer.append(span);
+  }
+}
+
+async function runOCR() {
+  const button = document.querySelector('[data-action="run-ocr"]');
+  const status = document.querySelector("#ocr-status");
+  const language = document.querySelector("#ocr-language").value;
+  button.disabled = true;
+  status.textContent = "Preparing this page…";
+  try {
+    const words = await recognizePDFPage(state.document, state.page, language, (progress) => {
+      const percent = Number.isFinite(progress.progress) ? ` ${Math.round(progress.progress * 100)}%` : "";
+      const stage = progress.status === "recognizing text" ? "Reading text" : "Loading OCR";
+      status.textContent = `${stage}${percent}…`;
+    });
+    state.ocrByPage.set(state.page, words);
+    state.selectedWord = null;
+    document.querySelector("#selection-tools").hidden = true;
+    await paintPage();
+    status.textContent = words.length
+      ? `Found ${words.length} words. Click a word to edit it; verify OCR spelling before applying.`
+      : "No words found. Try another language or a clearer scan.";
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : "OCR couldn't read this page.";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -167,6 +238,18 @@ function selectWord(event) {
   const item = event.target.closest(".selectable-text-item");
   if (!item) return;
   event.preventDefault();
+  if (item.dataset.source === "ocr") {
+    const box = {
+      x: Number(item.dataset.pdfX), y: Number(item.dataset.pdfY),
+      width: Number(item.dataset.pdfWidth), height: Number(item.dataset.pdfHeight),
+    };
+    state.selectedWord = {
+      id: `${state.page}-${Date.now()}`, page: state.page, text: item.textContent || "", box,
+      size: Number(item.dataset.fontSize) || 12, source: "ocr", confidence: Number(item.dataset.confidence) || 0,
+    };
+    showWordSelection(state.selectedWord);
+    return;
+  }
   let offset = 0;
   const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY);
   if (caret && item.contains(caret.startContainer)) {
@@ -216,11 +299,18 @@ function selectWord(event) {
     screenBox,
     size: Number(item.dataset.fontSize) || 12,
   };
-  document.querySelector("#replacement-text").value = selected[0];
+  showWordSelection(state.selectedWord);
+}
+
+function showWordSelection(selected) {
+  document.querySelector("#replacement-text").value = selected.text;
   document.querySelector("#selection-tools").hidden = false;
-  document.querySelector("#selection-hint").textContent = `Selected “${selected[0]}” on page ${state.page}.`;
+  document.querySelector("#selection-hint").textContent = `Selected “${selected.text}” on page ${state.page}${selected.source === "ocr" ? ` · OCR confidence ${selected.confidence}%` : ""}.`;
   document.querySelector("#edit-status").textContent = "Change the word or delete it, then export a copy.";
   renderSelectedWord();
+  const input = document.querySelector("#replacement-text");
+  input.focus();
+  input.select();
 }
 
 function inverseTransformPoint(x, y, transform) {
