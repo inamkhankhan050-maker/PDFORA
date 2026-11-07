@@ -1,10 +1,20 @@
-const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.esm.min.js";
+const TESSERACT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
 let tesseractPromise;
 
 async function getTesseract() {
-  tesseractPromise ??= import(TESSERACT_URL).catch(() => {
+  if (globalThis.Tesseract?.createWorker) return globalThis.Tesseract;
+  tesseractPromise ??= new Promise((resolve, reject) => {
+    const script = globalThis.document.createElement("script");
+    script.src = TESSERACT_URL;
+    script.async = true;
+    script.onload = () => globalThis.Tesseract?.createWorker
+      ? resolve(globalThis.Tesseract)
+      : reject(new Error("OCR loaded without its worker function. Reload the page and try again."));
+    script.onerror = () => reject(new Error("OCR couldn't load. Check your internet connection and try again."));
+    globalThis.document.head.append(script);
+  }).catch((error) => {
     tesseractPromise = undefined;
-    throw new Error("OCR couldn't load. Check your internet connection and try again.");
+    throw error;
   });
   return tesseractPromise;
 }
