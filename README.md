@@ -2,7 +2,7 @@
 
 **Edit Anything. Perfect Every Page.**
 
-PDFora is a browser-based PDF studio. This repository currently implements the foundation phase: a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, and downloading the untouched original.
+PDFora is a browser-based PDF studio. The current foundation includes a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, new-text overlays, undo for text additions, edited-copy export, and downloading the untouched original.
 
 ## Run locally
 
@@ -21,10 +21,11 @@ PDF.js is loaded from cdnjs at a pinned version. An internet connection is requi
 - Responsive landing page with drag-and-drop and file picker.
 - PDF signature, type, 50 MB file size, and 1–10 page validation.
 - Browser-side rendering with PDF.js, page thumbnails, page navigation, fit, and 25%–400% zoom.
+- Add basic Latin text overlays with a chosen size and color; undo additions and export a separate PDF copy using pdf-lib.
 - Download of the original, unchanged file.
 - Clear error messages for invalid, unreadable, oversized, and out-of-range files.
 
-Editing, OCR, AI, object removal, forms, annotations, and edited-PDF export are not implemented yet. The editor labels the current view as a preview and does not claim editing has occurred.
+Replacing existing text, image editing, OCR, AI, object removal, forms, and annotations are not implemented yet. Text additions are new vector overlays, not native replacement of existing PDF text. Export requires an internet connection to load pdf-lib; only basic Latin characters are supported by the built-in font.
 
 ## Repository map
 

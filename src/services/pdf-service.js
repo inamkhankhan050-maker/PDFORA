@@ -74,7 +74,42 @@ export async function renderPage(document, pageNumber, scale, canvas) {
     viewport,
     transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
   }).promise;
-  return { width: viewport.width, height: viewport.height };
+  return { width: viewport.width, height: viewport.height, transform: viewport.transform };
+}
+
+let pdfLibPromise;
+
+async function getPDFLib() {
+  pdfLibPromise ??= import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm").catch(() => {
+    pdfLibPromise = undefined;
+    throw new Error("The PDF export library couldn't load. Check your internet connection and try again.");
+  });
+  return pdfLibPromise;
+}
+
+export async function exportPDFWithText(file, edits) {
+  if (!edits.length) throw new Error("Add text to the document before exporting.");
+  const { PDFDocument, StandardFonts, rgb } = await getPDFLib();
+  let pdf;
+  try {
+    pdf = await PDFDocument.load(await file.arrayBuffer());
+  } catch {
+    throw new Error("This PDF couldn't be prepared for export. Password-protected or damaged files may not be supported.");
+  }
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  for (const edit of edits) {
+    const page = pdf.getPage(edit.page - 1);
+    if (!page) throw new Error(`Page ${edit.page} is no longer available.`);
+    let color;
+    try {
+      color = rgb(Number.parseInt(edit.color.slice(1, 3), 16) / 255, Number.parseInt(edit.color.slice(3, 5), 16) / 255, Number.parseInt(edit.color.slice(5, 7), 16) / 255);
+      font.encodeText(edit.text);
+    } catch {
+      throw new Error("This font supports basic Latin characters only. Hindi and other Unicode text need an embedded font, planned for a later phase.");
+    }
+    page.drawText(edit.text, { x: edit.x, y: edit.y, size: edit.size, font, color });
+  }
+  return pdf.save();
 }
 
 export function formatBytes(bytes) {
