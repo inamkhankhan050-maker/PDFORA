@@ -1,18 +1,27 @@
-# Testing notes
+# Testing
 
-## Foundation manual checks
+## Browser end-to-end (headless Chromium, 2026-11-07)
 
-1. Serve the repository with `python3 -m http.server 4173` and open it in a current desktop browser.
-2. Open a valid 1-page PDF and confirm it renders with a thumbnail.
-3. Open a 3-page PDF; select thumbnails and use previous/next page controls.
-4. Use zoom buttons and Fit page; confirm zoom remains between 25% and 400%.
-5. Try a non-PDF, empty file, file over 50 MB, and PDF over 10 pages; confirm each is rejected with a visible message.
-6. Download the original and compare it with the input; the preview does not modify the file.
-7. Click a word in a text-based PDF; confirm the selection box matches that word, then replace it and undo.
-8. Delete a word and confirm the UI describes a visual mask, not secure redaction.
-9. Add basic Latin text; export PDF, PNG, and JPG. Confirm the image contains the edits and represents the current page.
-10. Open the exported PDF in an independent viewer and verify page count and placement. Confirm the original file is unchanged and note the original word may remain searchable after visual masking.
-11. Try Hindi or other Unicode text and confirm PDFora reports the built-in-font limitation rather than claiming success.
-12. Repeat upload and navigation at narrow mobile widths.
+Tested with Playwright on `rl.pdf` (ReportLab, DejaVu Serif + Helvetica) and the app served statically. The test hook `globalThis.__pdfora` is only exposed when the URL has `?test`.
 
-Automated test tooling is not configured in this foundation snapshot. No feature is labeled tested or verified based on these instructions alone.
+| Feature | Status | Notes |
+|---|---|---|
+| Click a word and replace it, same font | Verified | "Muhammad" → "Ahmed" written with the PDF's own DejaVuSerif |
+| Delete a word | Verified | |
+| Edit text on a coloured background | Verified | Background colour sampled, "4500" → "12,750" in Helvetica-Bold |
+| Add new text in the PDF's own fonts | Verified | Font list offers fonts embedded in the PDF, standard fonts, Noto Sans |
+| Add Hindi text | Visually verified | Renders correctly with Noto Sans Devanagari; copy/search of new Hindi text is garbled |
+| Move / rotate an image | Verified | |
+| Resize an image by its corner handle | Bug | Drag on the corner did not change the size in the test; the Width/Height fields work |
+| Insert / replace / delete / flip / crop image | Verified in Node | |
+| Erase an area | Verified | |
+| Undo / redo | Verified | |
+| Download PDF | Verified | 2 pages, fonts and images checked with PyMuPDF |
+| Download page as JPG, all pages as PNG ZIP | Verified | |
+| Mobile width (390 px) | Visually checked | Toolbar and panel stack below the page |
+
+## Known limits
+
+- Replaced or deleted text is **covered** (painted over with the background colour), not removed from the file. Copy/search can still find the old words, so this is not secure redaction.
+- Scanned pages still use OCR + overlay (unchanged).
+- Not implemented: AI assistant, forms, signatures, annotations, page add/delete/reorder, metadata editing.
