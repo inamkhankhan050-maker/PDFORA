@@ -1,0 +1,82 @@
+import { PDFJS_VERSION, PRODUCT } from "../config.js";
+
+const PDFJS_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.mjs`;
+const PDFJS_WORKER_URL = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.mjs`;
+
+let pdfjsPromise;
+
+async function getPDFJS() {
+  pdfjsPromise ??= import(PDFJS_URL)
+    .then((pdfjs) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
+      return pdfjs;
+    })
+    .catch(() => {
+      pdfjsPromise = undefined;
+      throw new Error("The PDF viewer couldn't load. Check your internet connection and try again.");
+    });
+  return pdfjsPromise;
+}
+
+export function validatePDFFile(file) {
+  if (!file) return { ok: false, message: "Choose a PDF file to get started." };
+  if (file.size === 0) return { ok: false, message: "This file is empty." };
+  if (file.size > PRODUCT.maxFileBytes) {
+    return { ok: false, message: `This file is larger than ${PRODUCT.maxFileBytes / 1024 / 1024} MB.` };
+  }
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    return { ok: false, message: "PDFora supports PDF files only." };
+  }
+  return { ok: true };
+}
+
+export async function openPDF(file) {
+  const validation = validatePDFFile(file);
+  if (!validation.ok) throw new Error(validation.message);
+
+  const header = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+  const signature = new TextDecoder("latin1").decode(header);
+  if (!signature.includes("%PDF-")) throw new Error("This file does not contain a valid PDF signature.");
+
+  const pdfjs = await getPDFJS();
+  const data = new Uint8Array(await file.arrayBuffer());
+  let document;
+  try {
+    document = await pdfjs.getDocument({ data }).promise;
+  } catch (error) {
+    if (error?.name === "PasswordException") {
+      throw new Error("This PDF is password-protected. Password-based opening will be added in a later phase.");
+    }
+    throw new Error("PDFora couldn't read this PDF. It may be damaged or use an unsupported feature.");
+  }
+
+  if (document.numPages < PRODUCT.minPages || document.numPages > PRODUCT.maxPages) {
+    await document.destroy();
+    throw new Error(`This document has ${document.numPages} pages. PDFora currently supports ${PRODUCT.minPages}–${PRODUCT.maxPages} pages.`);
+  }
+
+  return document;
+}
+
+export async function renderPage(document, pageNumber, scale, canvas) {
+  const page = await document.getPage(pageNumber);
+  const viewport = page.getViewport({ scale, rotation: page.rotate });
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("This browser couldn't create a PDF canvas.");
+
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.floor(viewport.width * pixelRatio);
+  canvas.height = Math.floor(viewport.height * pixelRatio);
+  canvas.style.width = `${Math.floor(viewport.width)}px`;
+  canvas.style.height = `${Math.floor(viewport.height)}px`;
+  await page.render({
+    canvasContext: context,
+    viewport,
+    transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+  }).promise;
+  return { width: viewport.width, height: viewport.height };
+}
+
+export function formatBytes(bytes) {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
