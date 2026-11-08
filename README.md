@@ -1,50 +1,67 @@
 # PDFora
 
-**Edit Anything. Perfect Every Page.**
+A PDF editor that runs fully in the browser. Open a PDF, click a word to replace or remove it, add new text, and download an edited copy or the page as an image.
+Live: https://inamkhankhan050-maker.github.io/PDFORA/
 
-PDFora is a browser-based PDF studio. The current foundation includes a responsive website, local PDF validation, page previews, thumbnails, navigation, zoom, click-to-select word replacement/deletion, new-text overlays, undo, edited-copy export, and current-page PNG/JPG downloads.
+It is meant for small fixes, like a wrong name, date or typo, without uploading the file anywhere. There is no backend: the PDF is read into browser memory, edited there and downloaded again.
+
+![Editor](screenshots/editor.png)
+
+## Features
+
+- Drag-and-drop or file picker. Accepts real PDFs of 1 to 10 pages, up to 50 MB, with clear messages for anything else.
+- Page preview with thumbnails, page navigation, fit and 25% to 400% zoom.
+- Click a word in a text PDF to replace it or remove it.
+- Scanned pages: run OCR on a page first (English, Hindi, or both), then click words the same way.
+- Add new text with a chosen size and colour. Undo works for edits.
+- Download the edited PDF, the current page as PNG or JPG, or the original file.
+
+## How it works
+
+- `pdf-service.js` checks the file and renders pages with PDF.js.
+- PDF.js text positions go into a transparent layer on top of the page, so a click maps to a word. For scanned pages, Tesseract.js word boxes fill the same layer.
+- Edits are stored as a list (page, position, text, size, colour). On export, pdf-lib applies them to a copy of the PDF.
+
+## Limits
+
+- Replacing or deleting a word paints a white box with new text on top. The original text is still inside the file and can be searched or copied. This is not secure redaction.
+- The white box won't match coloured backgrounds.
+- New and replacement text only supports basic Latin characters (built-in PDF font). Hindi text can be read with OCR but not written.
+- PDF.js, pdf-lib and Tesseract.js load from CDNs, so the page needs internet. The PDF itself is not uploaded.
+- No automated tests yet. Testing is manual: text PDFs, scanned PDFs, a file over 10 pages and a non-PDF.
+
+## Tech stack
+
+Plain JavaScript (ES modules), HTML, CSS. PDF.js 4.10 for rendering, pdf-lib 1.17 for export, Tesseract.js 5 for OCR. Hosted on GitHub Pages.
 
 ## Run locally
 
-PDFora is a static website and does not need a build step. Serve the repository root over HTTP (ES modules do not work from `file://`):
+No build step. Serve the folder over HTTP (ES modules don't load from `file://`):
 
 ```sh
 python3 -m http.server 4173
 ```
 
-Then open <http://localhost:4173>.
+Then open http://localhost:4173.
 
-PDF.js is loaded from cdnjs at a pinned version. An internet connection is required to load the PDF renderer. PDF files are read and rendered in the browser and are not uploaded.
+## Folder structure
 
-## Current functionality
-
-- Responsive landing page with drag-and-drop and file picker.
-- PDF signature, type, 50 MB file size, and 1–10 page validation.
-- Browser-side rendering with PDF.js, page thumbnails, page navigation, fit, and 25%–400% zoom.
-- Click a word in text PDFs to select, replace, or visually mask it for deletion. For scanned PDFs, run OCR on each page first; English, Hindi, and English + Hindi are available.
-- Add basic Latin text overlays with a chosen size and color; undo additions and export a separate PDF copy using pdf-lib.
-- Download the current page as PNG or JPG with the visible edits included.
-- Download of the original, unchanged file.
-- Clear error messages for invalid, unreadable, oversized, and out-of-range files.
-
-Text replacement and deletion use visual overlays, not native content-stream editing or secure redaction. Removed text may remain searchable inside the PDF, and white masking may not match non-white backgrounds. Image editing, AI, object removal, forms, and annotations are not implemented yet. PDF export requires an internet connection to load pdf-lib; only basic Latin replacement/addition text is supported by the built-in font. OCR downloads its engine and language data in the browser; it processes the rendered page locally. PNG/JPG export downloads the current page only.
-
-## Repository map
-
-```text
+```
 index.html
 src/
-  config.js
-  main.js
-  components/
-    editor.js
-    landing.js
-  services/
-    pdf-service.js
-    ocr-service.js
+  main.js              app state, switches between upload and editor
+  config.js            file size and page limits, PDF.js version
+  components/          landing.js (upload), editor.js (preview and tools)
+  services/            pdf-service.js, ocr-service.js
   styles.css
 ```
 
-## Privacy
+## Roadmap
 
-The selected PDF stays in browser memory. PDF.js is downloaded from cdnjs and OCR resources from jsDelivr; page content is processed in the browser and is not uploaded to those CDNs. No AI service or backend is currently connected.
+- Image editing and annotations
+- Add, delete and reorder pages
+- Save work in progress in the browser
+
+## License
+
+MIT
