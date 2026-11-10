@@ -28,12 +28,12 @@ function setUploadMessage(message, error = false) {
   }
 }
 
-async function loadFile(file) {
+async function loadFile(file, password = "") {
   const validation = validatePDFFile(file);
   if (!validation.ok) return setUploadMessage(validation.message, true);
   setUploadMessage(`Checking ${file.name}…`);
   try {
-    const documentProxy = await openPDF(file);
+    const documentProxy = await openPDF(file, password);
     state.document = documentProxy;
     state.file = file;
     state.page = 1;
@@ -47,8 +47,55 @@ async function loadFile(file) {
     renderPageThumbnails(documentProxy, document.querySelector("#page-list"), state.page, goToPage);
     await paintPage();
   } catch (error) {
+    if (error?.name === "PasswordException") {
+      const enteredPassword = await requestPDFPassword(error.code === 2);
+      if (enteredPassword !== null) return loadFile(file, enteredPassword);
+      setUploadMessage(`Opening ${file.name} was cancelled.`);
+      return;
+    }
     setUploadMessage(error instanceof Error ? error.message : "PDFora couldn't open this file.", true);
   }
+}
+
+function requestPDFPassword(incorrect = false) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement("dialog");
+    dialog.className = "password-dialog";
+    dialog.innerHTML = `
+      <form class="password-form">
+        <div class="password-icon" aria-hidden="true">🔒</div>
+        <h2>Password-protected PDF</h2>
+        <p>${incorrect ? "That password didn't work. Try again." : "Enter the password to open this PDF."}</p>
+        <label for="pdf-password">PDF password</label>
+        <input id="pdf-password" type="password" autocomplete="current-password" required />
+        <div class="password-actions">
+          <button class="password-cancel" type="button">Cancel</button>
+          <button class="password-submit" type="submit">Open PDF</button>
+        </div>
+      </form>`;
+    const form = dialog.querySelector(".password-form");
+    const input = dialog.querySelector("#pdf-password");
+    let resolved = false;
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      finish(input.value);
+    });
+    dialog.querySelector(".password-cancel").addEventListener("click", () => finish(null));
+    dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      finish(null);
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+    input.focus();
+  });
 }
 
 function bindLanding() {
