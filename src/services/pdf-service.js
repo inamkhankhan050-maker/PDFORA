@@ -30,7 +30,7 @@ export function validatePDFFile(file) {
   return { ok: true };
 }
 
-export async function openPDF(file) {
+export async function openPDF(file, password = "") {
   const validation = validatePDFFile(file);
   if (!validation.ok) throw new Error(validation.message);
 
@@ -42,11 +42,9 @@ export async function openPDF(file) {
   const data = new Uint8Array(await file.arrayBuffer());
   let document;
   try {
-    document = await pdfjs.getDocument({ data }).promise;
+    document = await pdfjs.getDocument({ data, password: password || undefined }).promise;
   } catch (error) {
-    if (error?.name === "PasswordException") {
-      throw new Error("This PDF is password-protected. Password-based opening will be added in a later phase.");
-    }
+    if (error?.name === "PasswordException") throw error;
     throw new Error("PDFora couldn't read this PDF. It may be damaged or use an unsupported feature.");
   }
 
